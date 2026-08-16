@@ -24,12 +24,21 @@ public class VehicleRoute extends RouteBuilder {
     @Override
     public void configure() throws Exception {
 
+        // Dead Letter Channel real: após esgotar as retentativas, a
+        // mensagem ORIGINAL (o JSON cru recebido do Kafka, via
+        // useOriginalMessage()) é reenviada para o tópico
+        // vehicle-telemetry-dlq em vez de simplesmente descartada.
+        // Isso permite inspeção e reprocessamento manual posterior,
+        // ao contrário de um log-and-drop que perde o dado
+        // definitivamente.
         onException(Exception.class)
             .maximumRedeliveries(3)
             .redeliveryDelay(2000)
+            .useOriginalMessage()
             .handled(true)
             .logHandled(true)
-            .log("❌ [ERRO CRÍTICO] Falha ao persistir telemetria no banco após retentativas. Mensagem descartada.");
+            .log("❌ [DLQ] Falha ao persistir apos retentativas — mensagem enviada para vehicle-telemetry-dlq. Erro: ${exception.message}")
+            .to("kafka:vehicle-telemetry-dlq?brokers={{kafka.bootstrap.servers}}");
 
         from("kafka:vehicle-telemetry?brokers={{kafka.bootstrap.servers}}")
             .unmarshal().json(JsonLibrary.Jackson, VehicleData.class)
@@ -67,12 +76,13 @@ public class VehicleRoute extends RouteBuilder {
                     if (isDuplicateKeyViolation(e)) {
                         // Reprocessamento do Kafka (at-least-once delivery):
                         // a mesma mensagem já foi persistida antes. Não é um
-                        // erro real, então não deve disparar retry nem
-                        // acionar o onException — apenas loga e segue.
+                        // erro real — não deve ir para a DLQ nem disparar
+                        // retry, apenas loga e segue.
                         log.info("🔁 [KAFKA] Evento duplicado detectado e ignorado (ja processado): " + data.vehicleId);
                     } else {
                         // Erro genuíno (ex: banco fora do ar) — relança para
-                        // o onException tratar com retry/log configurados.
+                        // o onException tratar com retry e, se esgotar,
+                        // encaminhar para a DLQ.
                         throw e;
                     }
                 }
