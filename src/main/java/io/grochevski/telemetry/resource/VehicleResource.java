@@ -8,6 +8,7 @@ import org.jboss.logging.Logger;
 
 import io.quarkus.hibernate.reactive.panache.Panache;
 import io.smallrye.mutiny.Uni;
+import jakarta.validation.Valid;
 import jakarta.ws.rs.Consumes;
 import jakarta.ws.rs.GET;
 import jakarta.ws.rs.POST;
@@ -36,7 +37,7 @@ public class VehicleResource {
     }
 
     @POST
-    public Uni<Response> receiveTelemetry(VehicleData data) {
+    public Uni<Response> receiveTelemetry(@Valid VehicleData data) {
         if (data.timestamp == null) {
             data.timestamp = Instant.now();
         }
