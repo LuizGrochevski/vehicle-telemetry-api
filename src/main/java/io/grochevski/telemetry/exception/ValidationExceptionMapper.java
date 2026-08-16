@@ -1,4 +1,4 @@
-package io.grochevski.telemetry.resource;
+package io.grochevski.telemetry.exception;
 
 import jakarta.validation.ConstraintViolationException;
 import jakarta.ws.rs.core.Response;
