@@ -42,6 +42,8 @@ public class VehicleResource {
             data.timestamp = Instant.now();
         }
 
+        data.eventHash = data.computeEventHash();
+
         if (data.isSpeeding()) {
             LOG.warnf("⚠️ ALERTA: Veículo %s atingiu %d km/h! Localização: %f, %f", 
                 data.vehicleId, data.speed, data.latitude, data.longitude);

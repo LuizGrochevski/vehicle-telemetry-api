@@ -36,10 +36,6 @@ public class VehicleRoute extends RouteBuilder {
             .process(exchange -> {
                 VehicleData data = exchange.getIn().getBody(VehicleData.class);
 
-                // Aplica as mesmas constraints de Bean Validation usadas no
-                // endpoint REST (@NotBlank, @DecimalMin/Max, @Min), já que
-                // eventos vindos do Kafka não passam pelo JAX-RS e portanto
-                // não são validados automaticamente por @Valid.
                 Set<ConstraintViolation<VehicleData>> violations = validator.validate(data);
                 if (!violations.isEmpty()) {
                     StringBuilder errors = new StringBuilder();
@@ -50,20 +46,51 @@ public class VehicleRoute extends RouteBuilder {
                     return;
                 }
 
+                data.eventHash = data.computeEventHash();
+
                 if (data.isSpeeding()) {
                     log.warn("🚨 [KAFKA] ALERTA DE VELOCIDADE: Veículo " + data.vehicleId + " a " + data.speed + " km/h!");
                 } else {
                     log.info("📥 [KAFKA] Telemetria processada para o veículo " + data.vehicleId);
                 }
 
-                sessionFactory.openSession()
-                    .flatMap(session -> session.persist(data)
-                        .flatMap(v -> session.flush())
-                        .onTermination().call(session::close)
-                    )
-                    .await().indefinitely();
+                try {
+                    sessionFactory.openSession()
+                        .flatMap(session -> session.persist(data)
+                            .flatMap(v -> session.flush())
+                            .onTermination().call(session::close)
+                        )
+                        .await().indefinitely();
 
-                log.info("💾 [BANCO] Telemetria de " + data.vehicleId + " gravada com sucesso!");
+                    log.info("💾 [BANCO] Telemetria de " + data.vehicleId + " gravada com sucesso!");
+                } catch (Exception e) {
+                    if (isDuplicateKeyViolation(e)) {
+                        // Reprocessamento do Kafka (at-least-once delivery):
+                        // a mesma mensagem já foi persistida antes. Não é um
+                        // erro real, então não deve disparar retry nem
+                        // acionar o onException — apenas loga e segue.
+                        log.info("🔁 [KAFKA] Evento duplicado detectado e ignorado (ja processado): " + data.vehicleId);
+                    } else {
+                        // Erro genuíno (ex: banco fora do ar) — relança para
+                        // o onException tratar com retry/log configurados.
+                        throw e;
+                    }
+                }
             });
+    }
+
+    private boolean isDuplicateKeyViolation(Throwable t) {
+        Throwable current = t;
+        while (current != null) {
+            String msg = current.getMessage();
+            if (msg != null) {
+                String lower = msg.toLowerCase();
+                if (lower.contains("duplicate key") || lower.contains("unique constraint") || lower.contains("eventhash") || lower.contains("event_hash")) {
+                    return true;
+                }
+            }
+            current = current.getCause();
+        }
+        return false;
     }
 }
