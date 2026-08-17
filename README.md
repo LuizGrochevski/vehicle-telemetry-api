@@ -45,8 +45,8 @@ A aplicação resolve a ponte entre pools de threads tradicionais de consumo (Ap
 
 1. **Recepção de Telemetria:** O sistema suporta ingestão de dados tanto via API HTTP quanto através de eventos publicados no Kafka.
 2. **Processamento de Eventos Kafka:** O Apache Camel realiza o unmarshal das mensagens recebidas, executa validações e aplica regras de negócio como a detecção de excesso de velocidade.
-3. **Persistência Isolada:** Utiliza o padrão de abertura de sessão assíncrona (`Mutiny.SessionFactory`), garantindo escrita não-bloqueante de alto rendimento no PostgreSQL.
-4. **Resiliência:** políticas de retentativa automática configuradas através do Apache Camel para falhas transitórias.
+3. **Persistência Assíncrona Real:** Utiliza o padrão de abertura de sessão assíncrona (`Mutiny.SessionFactory`) através de um `AsyncProcessor` do Camel — a thread de consumo do Kafka é liberada imediatamente durante a escrita no PostgreSQL, sem bloqueio (`.await()`).
+4. **Resiliência e Idempotência:** cada evento recebe um hash determinístico (`eventHash`) com constraint única no banco, prevenindo duplicação em caso de reprocessamento do Kafka (garantia at-least-once). Falhas genuínas acionam retry automático (3 tentativas) e, se persistirem, a mensagem original é encaminhada para um tópico de Dead Letter Queue (`vehicle-telemetry-dlq`) para inspeção e reprocessamento manual, em vez de descartada silenciosamente.
 5. **Observabilidade (Prometheus/Grafana):** O motor do Micrometer expõe métricas nativas do ecossistema e do JVM/SO no endpoint `/q/metrics` que alimenta os dashboards.
 
 ### Fluxo Simplificado
@@ -83,6 +83,12 @@ A aplicação resolve a ponte entre pools de threads tradicionais de consumo (Ap
 └─────────────┘
 
 ---
+
+## 🧪 Testes Automatizados
+
+O projeto conta com 11 testes automatizados (`./mvnw test`), cobrindo a entidade `VehicleData` e o endpoint REST `VehicleResource` (casos de sucesso, validação de campos obrigatórios/inválidos e consulta por veículo).
+
+Os testes de integração usam o **Quarkus Dev Services**, que provisiona automaticamente um container PostgreSQL efêmero via Testcontainers a cada execução — não é necessário subir banco manualmente para rodar `./mvnw test`. Requer um daemon Docker-compatível disponível (Docker ou Podman com socket ativo).
 
 ## 🚀 Como Executar o Ecossistema (Produção Nativa)
 
@@ -140,5 +146,7 @@ curl http://localhost:8080/telemetry
 - [x] **Fase 5:** Monitoramento contínuo com Prometheus e Grafana via Micrometer Core.
 
 - [x] **Fase 6:** Compilação Nativa com GraalVM Mandrel Builder gerando imagens Docker ultra-leves e de boot instantâneo.
+
+- [x] **Fase 7:** Auditoria de arquitetura e correções: validação unificada entre REST e Kafka, idempotência via hash de evento, Dead Letter Channel real (`vehicle-telemetry-dlq`) e substituição do processamento bloqueante (`.await().indefinitely()`) por um `AsyncProcessor` não-bloqueante de ponta a ponta.
 
 
